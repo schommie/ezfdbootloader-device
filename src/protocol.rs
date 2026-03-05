@@ -9,14 +9,45 @@ pub struct DfrCanId {
     pub source: u16,
 }
 
+impl DfrCanId {
+    pub fn new(priority: u16, target: u16, command: u16, source: u16) -> Result<Self, &'static str> {
+        if priority > 0x07 {
+            return Err("Priority is out of range (max 7)");
+        }
+        if target > 0x1F {
+            return Err("Target ID is out of range (max 31)");
+        }
+        if source > 0x1F {
+            return Err("Source is out of range (max 31)");
+        }
+
+        Ok(Self {
+            priority,
+            target,
+            command,
+            source,
+        })
+    }
+
+    /// Packs the struct back into a 29-bit raw CAN identifier
+    pub fn to_raw_id(&self) -> u32 {
+        ((self.priority as u32) << 26)
+            | ((self.target as u32) << 21)
+            | ((self.command as u32) << 5)
+            | (self.source as u32)
+    }
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum BootloaderCommand {
     Ping = 0x45,
     Erase = 0x46,
     Write = 0x47,
-    Jump = 0x48,
-    SetAddress = 0x49,
+    WriteOk = 0x48,
+    AddressAndSize = 0x4A,
+    Jump = 0xAAAA,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,8 +80,9 @@ impl TryFrom<u16> for BootloaderCommand {
         match v {
             x if x == BootloaderCommand::Ping as u16 => Ok(BootloaderCommand::Ping),
             x if x == BootloaderCommand::Erase as u16 => Ok(BootloaderCommand::Erase),
-            x if x == BootloaderCommand::SetAddress as u16 => Ok(BootloaderCommand::SetAddress),
+            x if x == BootloaderCommand::AddressAndSize as u16 => Ok(BootloaderCommand::AddressAndSize),
             x if x == BootloaderCommand::Write as u16 => Ok(BootloaderCommand::Write),
+            x if x == BootloaderCommand::WriteOk as u16 => Ok(BootloaderCommand::WriteOk),
             x if x == BootloaderCommand::Jump as u16 => Ok(BootloaderCommand::Jump),
             _ => Err(()),
         }
