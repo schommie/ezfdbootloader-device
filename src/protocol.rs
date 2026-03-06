@@ -1,4 +1,3 @@
-
 #![allow(dead_code)]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,8 +41,9 @@ impl DfrCanId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum BootloaderCommand {
-    Ping = 0x45,
-    Erase = 0x46,
+    Ping = 0x40,
+    Erase = 0x45,
+    EraseOk = 0x46,
     Write = 0x47,
     WriteOk = 0x48,
     AddressAndSize = 0x4A,
@@ -80,6 +80,7 @@ impl TryFrom<u16> for BootloaderCommand {
         match v {
             x if x == BootloaderCommand::Ping as u16 => Ok(BootloaderCommand::Ping),
             x if x == BootloaderCommand::Erase as u16 => Ok(BootloaderCommand::Erase),
+            x if x == BootloaderCommand::EraseOk as u16 => Ok(BootloaderCommand::EraseOk),
             x if x == BootloaderCommand::AddressAndSize as u16 => Ok(BootloaderCommand::AddressAndSize),
             x if x == BootloaderCommand::Write as u16 => Ok(BootloaderCommand::Write),
             x if x == BootloaderCommand::WriteOk as u16 => Ok(BootloaderCommand::WriteOk),

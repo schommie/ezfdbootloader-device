@@ -4,17 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-stm32 = { version = "0.5.0", features = ["defmt", "stm32h533re", "memory-x", "time-driver-any", "exti", "unstable-pac", "low-power-disable-pender", "cyw43"] }
-embassy-sync = { version = "0.7.2", features = ["defmt"] }
-embassy-executor = { version = "0.9.0", features = ["arch-cortex-m", "executor-thread", "defmt"] }
-embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
-embassy-net = { version = "0.8.0", features = ["defmt", "tcp", "dhcpv4", "medium-ethernet", "proto-ipv6"] }
-embassy-usb = { version = "0.5.1", features = ["defmt"] }
+embassy-stm32 = { version = "0.5.0", features = ["stm32h533re", "memory-x", "time-driver-any", "exti", "unstable-pac", "low-power-disable-pender", "cyw43"] }
+embassy-sync = { version = "0.7.2" }
+embassy-executor = { version = "0.9.0", features = ["arch-cortex-m", "executor-thread"] }
+embassy-time = { version = "0.5.0", features = ["tick-hz-32_768"] }
+embassy-net = { version = "0.8.0", features = ["tcp", "dhcpv4", "medium-ethernet", "proto-ipv6"] }
+embassy-usb = { version = "0.5.1" }
 embassy-futures = { version = "0.1.2" }
 cyw43 = { version = "0.6.0"}
 
-defmt = "1.0.1"
-defmt-rtt = "1.0.0"
+rtt-target = "0.6"
 
 cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7.0"
@@ -22,7 +21,7 @@ embedded-hal = "1.0.0"
 embedded-hal-async = { version = "1.0.0" }
 embedded-io-async = { version = "0.7.0" }
 embedded-nal-async = "0.9.0"
-panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+panic-halt = "0.2"
 heapless = { version = "0.9", default-features = false }
 critical-section = "1.1"
 micromath = "2.0.0"
