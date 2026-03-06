@@ -127,7 +127,7 @@ async fn main(_spawner: Spawner) {
     let this_node_id = this_node as u16;
 
     let mut chunk_address: u32 = 0;
-    let mut chunk_size: u8;
+    let mut chunk_size: u8 = 0;
 
     let mut f = flash.bank1_region;
 
@@ -170,41 +170,68 @@ async fn main(_spawner: Spawner) {
                                     }
                                 }
                                 BootloaderCommand::Write => {
-                                    if data.len() % 16 != 0 {
-                                        rprintln!("Data length {} is not 16-byte aligned!", data.len());
-                                    } else if chunk_address >= 0x0800_8000 {
+                                    if chunk_address >= 0x0800_8000 {
                                         let offset = chunk_address - 0x0800_0000;
-                                        // 1. Write to flash
-                                        f.blocking_write(offset, data).unwrap();
-                                        rprintln!("Wrote {} bytes to {:x}", data.len(), chunk_address);
 
-                                        // 2. Prepare the WriteOk payload [Addr0, Addr1, Addr2, Addr3, Size]
-                                        let mut payload = [0u8; 5];
-                                        payload[0..4].copy_from_slice(&chunk_address.to_be_bytes());
-                                        payload[4] = data.len() as u8;
 
-                                        let reply_id = DfrCanId::new(
-                                            1,
-                                            can_msg.source,
-                                            BootloaderCommand::WriteOk.into(),
-                                            this_node_id
-                                        ).unwrap();
+                                        let mut write_buf = [0xFF; 64];
 
-                                        // 4. Create the FdFrame and send it
-                                        let tx_frame = embassy_stm32::can::frame::FdFrame::new_extended(reply_id.to_raw_id(), &payload).unwrap();
-                                        tx.write_fd(&tx_frame).await;
+                                        let aligned_len = (data.len() + 15) & !15;
 
-                                        rprintln!("Sent WriteOk ACK for 0x{:08X}", chunk_address);
+                                        if aligned_len <= 64 {
 
-                                        chunk_address += data.len() as u32;
+                                            write_buf[..data.len()].copy_from_slice(data);
+
+                                            f.blocking_write(offset, &write_buf[..aligned_len]).unwrap();
+                                            rprintln!("Wrote {} bytes (padded to {}) to {:x}", data.len(), aligned_len, chunk_address);
+
+                                            let mut payload = [0u8; 5];
+                                            payload[0..4].copy_from_slice(&chunk_address.to_be_bytes());
+                                            payload[4] = chunk_size;
+
+                                            let reply_id = DfrCanId::new(
+                                                1,
+                                                can_msg.source,
+                                                BootloaderCommand::WriteOk.into(),
+                                                this_node_id
+                                            ).unwrap();
+
+                                            let tx_frame = embassy_stm32::can::frame::FdFrame::new_extended(reply_id.to_raw_id(), &payload).unwrap();
+                                            tx.write_fd(&tx_frame).await;
+
+                                            rprintln!("Sent WriteOk ACK for 0x{:08X}", chunk_address);
+
+                                            chunk_address += data.len() as u32;
+                                        }
                                     }
                                 }
                                 BootloaderCommand::Jump => {
                                     rprintln!("Jumping to application at 0x{:08X}", 0x0800_8000u32);
                                     unsafe {
                                         let mut p = cortex_m::Peripherals::steal();
+
+                                        cortex_m::interrupt::disable();
+
+                                        // Disable SysTick
+                                        p.SYST.disable_counter();
+                                        p.SYST.disable_interrupt();
+
+                                        for i in 0..16 {
+                                            p.NVIC.icer[i].write(0xFFFF_FFFF);
+                                            p.NVIC.icpr[i].write(0xFFFF_FFFF);
+                                        }
+
+                                        let rcc = embassy_stm32::pac::RCC;
+                                        rcc.cr().modify(|w| w.set_hsion(true));
+                                        while !rcc.cr().read().hsirdy() {}
+                                        rcc.cfgr().modify(|w| w.set_sw(embassy_stm32::pac::rcc::vals::Sw::HSI));
+                                        while rcc.cfgr().read().sws() != embassy_stm32::pac::rcc::vals::Sw::HSI {}
+                                        rcc.cr().modify(|w| w.set_pllon(0, false));
+
                                         p.SCB.invalidate_icache();
                                         p.SCB.vtor.write(0x0800_8000);
+
+                                        // Jump!
                                         cortex_m::asm::bootload(0x0800_8000 as *const u32);
                                     }
                                 }
