@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-stm32 = { version = "0.5.0", features = ["stm32h533re", "memory-x", "unstable-pac"] }
+embassy-stm32 = { version = "0.5.0", features = ["stm32h533re", "memory-x", "unstable-pac", "time-driver-any"] }
 embassy-executor = { version = "0.9.0", features = ["arch-cortex-m", "executor-thread"] }
+embassy-time = "0.4"
 
 rtt-target = "0.6"
 
@@ -15,9 +16,11 @@ panic-halt = "0.2"
 embedded-can = "0.4.1"
 
 [patch.crates-io]
-#embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "2b7a98b9981168264cd474596ac687f458e2e412" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "2b7a98b9981168264cd474596ac687f458e2e412" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "2b7a98b9981168264cd474596ac687f458e2e412" }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "2b7a98b9981168264cd474596ac687f458e2e412" }
 embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "2b7a98b9981168264cd474596ac687f458e2e412" }
+
 
 # cargo build/run
 [profile.dev]
@@ -29,13 +32,13 @@ opt-level = 3
 overflow-checks = true
 
 # cargo test
-[profile.test]
-codegen-units = 1
-debug = 2
-debug-assertions = true
-incremental = false
-opt-level = 3
-overflow-checks = true
+# [profile.test]
+# codegen-units = 1
+# debug = 2
+# debug-assertions = true
+# incremental = false
+# opt-level = 3
+# overflow-checks = true
 
 # cargo build/run --release
 [profile.release]

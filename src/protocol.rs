@@ -47,6 +47,9 @@ pub enum BootloaderCommand {
     Write = 0x47,
     WriteOk = 0x48,
     AddressAndSize = 0x4A,
+    FirmwareUpdateQuery = 0x4B,
+    FirmwareUpdateResponse = 0x4C,
+    Reboot = 0x4D,
     Jump = 0xAAAA,
 }
 
@@ -84,6 +87,9 @@ impl TryFrom<u16> for BootloaderCommand {
             x if x == BootloaderCommand::AddressAndSize as u16 => Ok(BootloaderCommand::AddressAndSize),
             x if x == BootloaderCommand::Write as u16 => Ok(BootloaderCommand::Write),
             x if x == BootloaderCommand::WriteOk as u16 => Ok(BootloaderCommand::WriteOk),
+            x if x == BootloaderCommand::FirmwareUpdateQuery as u16 => Ok(BootloaderCommand::FirmwareUpdateQuery),
+            x if x == BootloaderCommand::FirmwareUpdateResponse as u16 => Ok(BootloaderCommand::FirmwareUpdateResponse),
+            x if x == BootloaderCommand::Reboot as u16 => Ok(BootloaderCommand::Reboot),
             x if x == BootloaderCommand::Jump as u16 => Ok(BootloaderCommand::Jump),
             _ => Err(()),
         }

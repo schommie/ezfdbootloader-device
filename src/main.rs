@@ -11,6 +11,7 @@ use embassy_stm32::can::config::{
     ClockDivider, DataBitTiming, FdCanConfig, FrameTransmissionConfig,
     NominalBitTiming, TxBufferMode,
 };
+use embassy_time::{Duration, with_timeout};
 use core::num::{NonZeroU16, NonZeroU8};
 use embedded_can::Id;
 use panic_halt as _;
@@ -26,6 +27,35 @@ bind_interrupts!(struct Irqs {
     FDCAN2_IT0 => can::IT0InterruptHandler<FDCAN2>;
     FDCAN2_IT1 => can::IT1InterruptHandler<FDCAN2>;
 });
+
+unsafe fn jump_to_app() -> ! {
+    unsafe {
+        let mut p = cortex_m::Peripherals::steal();
+
+        cortex_m::interrupt::disable();
+
+        // Disable SysTick
+        p.SYST.disable_counter();
+        p.SYST.disable_interrupt();
+
+        for i in 0..16 {
+            p.NVIC.icer[i].write(0xFFFF_FFFF);
+            p.NVIC.icpr[i].write(0xFFFF_FFFF);
+        }
+
+        let rcc = embassy_stm32::pac::RCC;
+        rcc.cr().modify(|w| w.set_hsion(true));
+        while !rcc.cr().read().hsirdy() {}
+        rcc.cfgr().modify(|w| w.set_sw(embassy_stm32::pac::rcc::vals::Sw::HSI));
+        while rcc.cfgr().read().sws() != embassy_stm32::pac::rcc::vals::Sw::HSI {}
+        rcc.cr().modify(|w| w.set_pllon(0, false));
+
+        p.SCB.invalidate_icache();
+        p.SCB.vtor.write(0x0800_8000);
+
+        cortex_m::asm::bootload(0x0800_8000 as *const u32);
+    }
+}
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -99,41 +129,79 @@ async fn main(_spawner: Spawner) {
     can.properties()
         .set_extended_filter(ExtendedFilterSlot::_1, filter_this_node);
     let config = FdCanConfig::default()
-        .set_clock_divider(ClockDivider::_1)                  // FDCAN_CLOCK_DIV1
-        .set_frame_transmit(FrameTransmissionConfig::AllowFdCanAndBRS) // FDCAN_FRAME_FD_BRS
-        .set_automatic_retransmit(false)                       // AutoRetransmission = DISABLE
-        .set_transmit_pause(false)                             // TransmitPause = DISABLE
-        .set_protocol_exception_handling(false)                // ProtocolException = DISABLE
-        .set_tx_buffer_mode(TxBufferMode::Fifo)                // FDCAN_TX_FIFO_OPERATION
+        .set_clock_divider(ClockDivider::_1)
+        .set_frame_transmit(FrameTransmissionConfig::AllowFdCanAndBRS)
+        .set_automatic_retransmit(false)
+        .set_transmit_pause(false)
+        .set_protocol_exception_handling(false)
+        .set_tx_buffer_mode(TxBufferMode::Fifo)
         .set_nominal_bit_timing(NominalBitTiming {
-            prescaler:        NonZeroU16::new(1).unwrap(),     // NominalPrescaler = 1
-            sync_jump_width:  NonZeroU8::new(6).unwrap(),      // NominalSyncJumpWidth = 6
-            seg1:             NonZeroU8::new(33).unwrap(),     // NominalTimeSeg1 = 33
-            seg2:             NonZeroU8::new(6).unwrap(),      // NominalTimeSeg2 = 6
+            prescaler:        NonZeroU16::new(1).unwrap(),
+            sync_jump_width:  NonZeroU8::new(6).unwrap(),
+            seg1:             NonZeroU8::new(33).unwrap(),
+            seg2:             NonZeroU8::new(6).unwrap(),
         })
         .set_data_bit_timing(DataBitTiming {
-            transceiver_delay_compensation: true,              // TDC required at 5Mbps
-            prescaler:       NonZeroU16::new(1).unwrap(),      // tq = 1/40MHz = 25ns
-            seg1:            NonZeroU8::new(5).unwrap(),       // 5 tq
-            seg2:            NonZeroU8::new(2).unwrap(),       // 2 tq → 1+5+2 = 8 tq = 5Mbps
+            transceiver_delay_compensation: true,
+            prescaler:       NonZeroU16::new(1).unwrap(),
+            seg1:            NonZeroU8::new(5).unwrap(),
+            seg2:            NonZeroU8::new(2).unwrap(),
             sync_jump_width: NonZeroU8::new(2).unwrap(),
         });
 
     can.set_config(config);
 
-    //let mut can = can.into_internal_loopback_mode();
     #[allow(unused_mut)]
     let mut can = can.into_normal_mode();
     let (mut tx, mut rx, _props) = can.split();
-    log!("CAN up and running, waiting for messages");
-    #[allow(unused_mut)]
-    let mut flash = flash::Flash::new_blocking(peripherals.FLASH).into_blocking_regions();
 
     let this_node_id = this_node as u16;
+    let host_id = CanDevices::RaspberryPi as u16;
 
+    log!("CAN up, sending FirmwareUpdateQuery to host");
+
+    // Send FirmwareUpdateQuery to host
+    let query_id = DfrCanId::new(
+        1,
+        host_id,
+        BootloaderCommand::FirmwareUpdateQuery.into(),
+        this_node_id,
+    ).unwrap();
+    let query_frame = embassy_stm32::can::frame::FdFrame::new_extended(query_id.to_raw_id(), &[]).unwrap();
+    tx.write_fd(&query_frame).await;
+
+    // Wait 100ms for FirmwareUpdateResponse
+    let stay_in_bootloader = match with_timeout(Duration::from_millis(100), async {
+        loop {
+            if let Ok(message) = rx.read_fd().await {
+                let (rx_frame, _ts) = message.parts();
+                if let Id::Extended(id) = rx_frame.id() {
+                    let can_msg = parse_can_id(id.as_raw());
+                    if can_msg.target == this_node_id {
+                        if let Ok(BootloaderCommand::FirmwareUpdateResponse) = BootloaderCommand::try_from(can_msg.command) {
+                            let data = rx_frame.data();
+                            return data.first().copied().unwrap_or(0) == 1;
+                        }
+                    }
+                }
+            }
+        }
+    }).await {
+        Ok(result) => result,
+        Err(_) => false, // Timeout
+    };
+
+    if !stay_in_bootloader {
+        log!("No firmware update, jumping to application");
+        unsafe { jump_to_app(); }
+    }
+
+    log!("Firmware update requested, entering bootloader mode");
+
+    #[allow(unused_mut)]
+    let mut flash = flash::Flash::new_blocking(peripherals.FLASH).into_blocking_regions();
     let mut chunk_address: u32 = 0;
     let mut chunk_size: u8 = 0;
-
     let mut f = flash.bank1_region;
 
     loop {
@@ -146,13 +214,20 @@ async fn main(_spawner: Spawner) {
                     let can_msg = parse_can_id(raw_id);
                     log!("CAN msg: target={:X} command={:X}", can_msg.target, can_msg.command);
                     if can_msg.target == this_node_id {
-                        /* this is a command for us! */
                         let data = rx_frame.data();
 
                         if let Ok(command) = BootloaderCommand::try_from(can_msg.command) {
                             match command {
                                 BootloaderCommand::Ping => {
-                                    log!("Command Ping {:X} received", BootloaderCommand::Ping as u16);
+                                    log!("Command Ping received, replying with bootloader status");
+                                    let reply_id = DfrCanId::new(
+                                        1,
+                                        can_msg.source,
+                                        BootloaderCommand::Ping.into(),
+                                        this_node_id,
+                                    ).unwrap();
+                                    let tx_frame = embassy_stm32::can::frame::FdFrame::new_extended(reply_id.to_raw_id(), &[0u8]).unwrap();
+                                    tx.write_fd(&tx_frame).await;
                                 }
                                 BootloaderCommand::Erase => {
                                     f.blocking_erase(0x8000, 0x80000).unwrap();
@@ -211,33 +286,7 @@ async fn main(_spawner: Spawner) {
                                 }
                                 BootloaderCommand::Jump => {
                                     log!("Jumping to application at 0x{:08X}", 0x0800_8000u32);
-                                    unsafe {
-                                        let mut p = cortex_m::Peripherals::steal();
-
-                                        cortex_m::interrupt::disable();
-
-                                        // Disable SysTick
-                                        p.SYST.disable_counter();
-                                        p.SYST.disable_interrupt();
-
-                                        for i in 0..16 {
-                                            p.NVIC.icer[i].write(0xFFFF_FFFF);
-                                            p.NVIC.icpr[i].write(0xFFFF_FFFF);
-                                        }
-
-                                        let rcc = embassy_stm32::pac::RCC;
-                                        rcc.cr().modify(|w| w.set_hsion(true));
-                                        while !rcc.cr().read().hsirdy() {}
-                                        rcc.cfgr().modify(|w| w.set_sw(embassy_stm32::pac::rcc::vals::Sw::HSI));
-                                        while rcc.cfgr().read().sws() != embassy_stm32::pac::rcc::vals::Sw::HSI {}
-                                        rcc.cr().modify(|w| w.set_pllon(0, false));
-
-                                        p.SCB.invalidate_icache();
-                                        p.SCB.vtor.write(0x0800_8000);
-
-                                        // Jump!
-                                        cortex_m::asm::bootload(0x0800_8000 as *const u32);
-                                    }
+                                    unsafe { jump_to_app(); }
                                 }
                                 _ => log!("Unhandled command 0x{:04X}", can_msg.command),
                             }
